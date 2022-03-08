@@ -1,5 +1,14 @@
-pacman::p_load(tidyverse, rio, sidrar)
+pacman::p_load(tidyverse, rio, sidrar, janitor)
+options(scipen = 100)
 
+
+
+region <- import("banco_com_codigos.xlsx", setclass = "tibble") %>%
+  clean_names()
+municipio <- str_c("/N6/", paste0(region$codigo, collapse = ","))
+cor_2 <- "/c830/all"
+sexo <- "/C12564/all"
+familiar <- "/C829/46304"
 
 
 import_db <- function(base){
@@ -7,212 +16,237 @@ import_db <- function(base){
     tibble() %>%
     janitor::clean_names()
 }
+teste <- import_db(str_c(table, cor_2, municipio))
 
+sum_all <- function(structure){
+  base <- import_db(structure)
+  big <- base %>%
+    select(-valor, -municipio, -municipio_codigo) %>%
+    map_int(n_distinct) %>%
+    .[. > 1]
+  new_big <- names(big)[!str_detect(names(big), "codigo")]
+  if(any(str_detect(colnames(base), "cor_ou_raca"))){
+    base <- base %>%
+      select(-contains("codigo")) %>%
+      mutate(cor_ou_raca_do_produtor = str_replace(cor_ou_raca_do_produtor, "Preta|Parda", "Negra"))
+  }
+  final <- base %>%
+    group_by_if(colnames(.) %in% new_big) %>%
+    summarise(total_value = sum(valor, na.rm = T)) %>%
+    ungroup()
+return(final)
+   }
+get_totals <- function(base, coluna, genero = F, col_gen = NULL){
+  if(genero == F){
+    totals <- base %>%
+      filter({{coluna}} == "Total") %>%
+      select(-{{coluna}}) %>%
+      unique()
 
-table <- "/t/6759"
-cor_2 <- "/c830/all"
-unidade_nacional <- "/N133/22"
-tipologia <- "/c829/all"
+    return(totals)
+  } else{
+    origin <- base %>%
+      select(-contains('codigo')) %>%
+      filter({{coluna}} == "Total")
+    man <- origin %>%
+      filter({{col_gen}} == "Homens")
+    wom <- origin %>%
+      filter({{col_gen}} == "Mulheres")
+    return(bind_rows(list("man" = man, "woman" = wom)) %>%
+             select(-{{coluna}}) %>%
+             unique())
+  }
+}
 
-assistencia <- "/C12567/all"
-
-
-
-#### % com acesso a assistência técnica ####
-base <- str_c(
-  table,
-  cor_2,
-  unidade_nacional,
-  assistencia,
-  familiar
-)
-
-simples <- str_c(
-  table,
-  cor_2,
-  unidade_nacional,
-  familiar
-#  assistencia
-)
+specifics <- function(original, column_of_interest, function_to_use = NULL, total, string_col){
   
+  usecol <- c(colnames({{total}}), string_col)
+  
+  if(ncol({{total}})>1){
+  
+  joining <- original %>%
+    filter({{function_to_use}}) %>%
+    select_if(colnames(.) %in% usecol) %>%
+    rename(local_value = total_value)
+  
+  {{total}} %>%
+    left_join(joining) %>%
+    mutate(pct = (local_value/total_value)*100)
+  } else{
+    joining <- original %>%
+      filter({{function_to_use}}) %>%
+      select_if(colnames(.) %in% usecol) %>%
+      rename(local_value = total_value) %>%
+      mutate(total_value = total$total_value,
+             pct = local_value/total_value*100)
+    return(joining)
+  }
+}
 
-#### Benchmark ####
+#### pct analfabeto ####
 
-# Total de estabelecimentos familiar
+t_alfa <- "/t/6755"
+escola <- "/C800/all"
 
-geral <- get_sidra(api = simples) %>%
-  tibble() %>%
-  janitor::clean_names()
+# Analfabetos
 
-estab_geral <- geral %>%
-  filter(cor_ou_raca_do_produtor == "Total") %>%
-  .$valor
+alfabeto <- sum_all(str_c(t_alfa, cor_2, municipio, sexo, escola, familiar))
+totals_alfa <- alfabeto %>%
+  get_totals(escolaridade_do_produtor, T, sexo_do_produtor)
 
-# Total de estabelecimentos afrodescendentes familiar
+specifics(alfabeto, escolaridade_do_produtor, str_detect(escolaridade_do_produtor, "escrever - não"), totals_alfa,
+          "escolaridade_do_produtor") %>%
+  arrange(cor_ou_raca_do_produtor)
 
-af_geral <- geral %>%
-  filter(cor_ou_raca_do_produtor == "Parda" | cor_ou_raca_do_produtor == "Preta") %>%
-  .$valor %>%
-  sum(.)
+# Nunca frequentou a escola
 
-# Total de estabelecimentos indígenas familiar
+alfabeto_2 <- sum_all(str_c(t_alfa, cor_2, municipio, escola, familiar))
+totals_alfa_2 <- alfabeto_2 %>%
+  get_totals(escolaridade_do_produtor)
 
-in_geral <- geral %>%
-  filter(cor_ou_raca_do_produtor == "Indígena") %>%
-  .$valor
+specifics(alfabeto_2, escolaridade_do_produtor, str_detect(escolaridade_do_produtor, "frequentou escola"), totals_alfa_2,
+          "escolaridade_do_produtor") %>%
+  arrange(cor_ou_raca_do_produtor)
 
 
-# Acesso assistência técnica
+#### Idade ####
 
-assistencia <- get_sidra(api = base) %>%
-  tibble() %>%
-  janitor::clean_names()
+t_idade <- "/t/6882"
+group_idade <- "/C12771/all"
 
-# Geral
 
-assistencia %>%
-  filter(origem_da_orientacao_tecnica_recebida == "Recebe" & cor_ou_raca_do_produtor == "Total") %>%
-  select(origem_da_orientacao_tecnica_recebida, cor_ou_raca_do_produtor, valor) %>%
-  mutate(total = estab_geral,
-         pct = valor/total)
+idade <- sum_all(str_c(t_idade, cor_2, group_idade, municipio, familiar)) %>%
+  filter(str_detect(variavel, "Número"))
+total_idade <- idade %>%
+  get_totals(classe_de_idade_do_produtor)
 
-# Indígena
+specifics(idade, classe_de_idade_do_produtor, cor_ou_raca_do_produtor != "Amarela", 
+          total_idade,
+          "classe_de_idade_do_produtor") %>%
+  arrange(cor_ou_raca_do_produtor) %>%
+  filter(cor_ou_raca_do_produtor != "Amarela") %>%
+  View
 
-assistencia %>%
-  filter(origem_da_orientacao_tecnica_recebida == "Recebe" & cor_ou_raca_do_produtor == "Indígena") %>%
-  select(origem_da_orientacao_tecnica_recebida, cor_ou_raca_do_produtor, valor) %>%
-  mutate(total = in_geral,
-         pct = valor/total)
+#### Estabelecimentos ####
 
-# Negros
+t_direcao <- "/t/6776"
+dirigido <- "/V/9998"
 
-assistencia %>%
-  filter(origem_da_orientacao_tecnica_recebida == "Recebe" & (cor_ou_raca_do_produtor == "Preta" | cor_ou_raca_do_produtor == "Parda")) %>%
-  select(origem_da_orientacao_tecnica_recebida, cor_ou_raca_do_produtor, valor) %>%
-  summarise(valor = sum(valor)) %>%
-  mutate(total = af_geral,
-         pct = valor/total)
+
+estabelecimento <- sum_all(str_c(t_direcao, cor_2, sexo, municipio, dirigido, familiar))
+
+total_estab <- estabelecimento %>%
+  get_totals(sexo_do_produtor)
+
+specifics(estabelecimento, sexo_do_produtor, cor_ou_raca_do_produtor != "Amarela", 
+          total_estab,
+          "sexo_do_produtor")
+
+
+#### Receitas ####
+
+t_receita <- "/t/6901"
+obtencao <- "/V/10006"
+
+n_estab <- estabelecimento %>%
+  filter(cor_ou_raca_do_produtor == "Total" &
+           sexo_do_produtor == "Total") %>%
+  .$total_value
+
+receita <- sum_all(str_c(t_receita, obtencao, municipio, familiar)) %>%
+  mutate(estabs = n_estab,
+         pct = total_value/estabs)
+
+
+
+#### Produção para consumo ####
+
+table_consumo <- "/t/6762"
+finalidade <- "/C834/all"
+sexo_2 <- "/C12566/all"
+
+consumo <- sum_all(str_c(table_consumo, municipio, finalidade, familiar, sexo_2))
+total_consumo <- consumo %>%
+  get_totals(sexo_da_pessoa_que_dirige_o_estabelecimento_produtor_ou_administrador)
+
+
+
+specifics(consumo, sexo_da_pessoa_que_dirige_o_estabelecimento_produtor_ou_administrador, total_value != 0, 
+          total_consumo,
+          "sexo_da_pessoa_que_dirige_o_estabelecimento_produtor_ou_administrador")
+
+
+
+#### Produção ####
+
+table_area <- "/t/6759"
+atividade <- "/C12517/all"
+tamanho <- "/C220/all"
+
+prod <- sum_all(str_c(table_area, cor_2, municipio, familiar, atividade))
+
+total_prod <- prod %>%
+  get_totals(grupos_de_atividade_economica)
+
+
+specifics(prod, grupos_de_atividade_economica, total_value != 0, 
+          total_prod,
+          "grupos_de_atividade_economica") %>%
+  mutate(pct = pct*100) %>%
+  View
 
 
 #### Acesso financiamento #### 
 
 fin_tab <- "/t/6895"
 fin_prog <- "/C12544/all"
-financiamento <- "/V/1001990"
+financiamento_pct <- "/V/1001990"
+financiamento_un <- "/V/1990"
 
-pct_fin <- import_db(str_c(fin_tab, familiar, unidade_nacional, financiamento))
+fin_simp <- sum_all(str_c(fin_tab, familiar, municipio, financiamento_un))
 
-fin <- import_db(str_c(fin_tab, fin_prog, familiar, unidade_nacional))
-total_fin <- fin %>%
-  filter(recursos_provenientes_de_programas_governamentais_de_credito == "Total") %>%
-  .$valor
-
-# Com acesso ao crédito pronaf
-fin %>%
-  mutate(total = total_fin,
-         pct = valor/total) %>%
-  select(recursos_provenientes_de_programas_governamentais_de_credito, pct)
-
-
-#### produção principal ####
-
-
-table_area <- "/t/6759"
-atividade <- "/C12517/all"
-tamanho <- "/C220/all"
-
-prod <- import_db(str_c(table_area, cor_2, unidade_nacional, familiar, atividade)) %>%
-  select(valor, cor_ou_raca_do_produtor, grupos_de_atividade_economica)
-
-prod_total <- prod[1,1]
-prod_in <- prod %>%
-  filter(grupos_de_atividade_economica == "Total" & cor_ou_raca_do_produtor == "Indígena") %>%
-  .$valor
-prod_af <- prod %>%
-  filter(grupos_de_atividade_economica == "Total" & (cor_ou_raca_do_produtor == "Preta" | cor_ou_raca_do_produtor == "Parda")) %>%
-  summarise(valor = sum(valor)) %>%
-  .$valor
-  
-# total
-prod %>%
+estabs <- total_estab %>%
   filter(cor_ou_raca_do_produtor == "Total") %>%
-  mutate(agro = str_detect(grupos_de_atividade_economica, "florestal")) %>%
-  group_by(agro) %>%
-  mutate(v_agro = sum(valor)) %>%
-  ungroup() %>%
-  mutate(total = prod_total,
-         pct = (valor/total)*100,
-         pct_agro = (v_agro/total)*100)
+  .$total_value
 
-# Indígena
-prod %>%
-  filter(cor_ou_raca_do_produtor == "Indígena") %>%
-  mutate(agro = str_detect(grupos_de_atividade_economica, "florestal")) %>%
-  group_by(agro) %>%
-  mutate(v_agro = sum(valor, na.rm = T)) %>%
-  ungroup() %>%
-  mutate(total = prod_in,
-         pct = (valor/total)*100,
-         pct_agro = (v_agro/total)*100)
+fin_simp %>%
+  mutate(total = estabs,
+         pct = (total_value/total)*100)
+
+fin_cred <- sum_all(str_c(fin_tab, familiar, municipio, fin_prog))
+total_cred <- fin_cred %>%
+  get_totals(recursos_provenientes_de_programas_governamentais_de_credito)
 
 
-# Negros
-prod %>%
-  filter(cor_ou_raca_do_produtor == "Parda" | cor_ou_raca_do_produtor == "Preta") %>%
-  group_by(grupos_de_atividade_economica) %>%
-  summarise(valor = sum(valor, na.rm = T)) %>%
-  ungroup() %>%
-  mutate(agro = str_detect(grupos_de_atividade_economica, "florestal")) %>%
-  group_by(agro) %>%
-  mutate(v_agro = sum(valor, na.rm = T)) %>%
-  ungroup() %>%
-  mutate(total = prod_af,
-         pct = (valor/total)*100,
-         pct_agro = (v_agro/total)*100)
+specifics(fin_cred, recursos_provenientes_de_programas_governamentais_de_credito , total_value != 0, 
+          total_cred,
+          "recursos_provenientes_de_programas_governamentais_de_credito")
 
-#### Produção para consumo ####
+#### Orientação técnica ####
 
-table_consumo <- "/t/6762"
-finalidade <- "/C834/all"
-sexo_adm <- "/C12566/all"
+t_tec <- "/t/6759"
+orienta_tec <- "/C12567/all"
+
+orientacao <- sum_all(str_c(t_tec, orienta_tec, cor_2, municipio, familiar))
+total_orientacao <- get_totals(orientacao, origem_da_orientacao_tecnica_recebida)
+specifics(orientacao, origem_da_orientacao_tecnica_recebida,
+          str_detect(tolower(origem_da_orientacao_tecnica_recebida), "recebe"), total_orientacao, "origem_da_orientacao_tecnica_recebida")
 
 
-consumo <- import_db(str_c(table_consumo, unidade_nacional, finalidade, familiar, sexo_adm))
-# Totais
-consumo_total_h <- consumo %>%
-  select(finalidade_principal_da_producao_agropecuaria_do_estabelecimento,
-         sexo_da_pessoa_que_dirige_o_estabelecimento_produtor_ou_administrador,
-         valor) %>%
-  filter(finalidade_principal_da_producao_agropecuaria_do_estabelecimento == "Total" & sexo_da_pessoa_que_dirige_o_estabelecimento_produtor_ou_administrador == "Homens") %>%
-  .$valor
+#### Hidrico ####
 
-consumo_total_m <- consumo %>%
-  select(finalidade_principal_da_producao_agropecuaria_do_estabelecimento,
-         sexo_da_pessoa_que_dirige_o_estabelecimento_produtor_ou_administrador,
-         valor) %>%
-  filter(finalidade_principal_da_producao_agropecuaria_do_estabelecimento == "Total" & sexo_da_pessoa_que_dirige_o_estabelecimento_produtor_ou_administrador == "Mulheres") %>%
-  .$valor
+# Não possuem recurso hídrico
 
-consumo %>%
-  select(finalidade_principal_da_producao_agropecuaria_do_estabelecimento,
-         sexo_da_pessoa_que_dirige_o_estabelecimento_produtor_ou_administrador,
-         valor) %>%
-  mutate(total_h = consumo_total_h,
-         total_m = consumo_total_m,
-         pct_h = valor/total_h,
-         pct_m = valor/total_m)
-
-
-#### Não possuem recursos hídricos ####
 
 t_rec_hid <- "/t/6861"
 tem_rec <- "/V/2324"
 
-rec_hid <- import_db(str_c(t_rec_hid, familiar, unidade_nacional, tem_rec))
+rec_hid <- sum_all(str_c(t_rec_hid, familiar, municipio, tem_rec))
 rec_hid %>%
-  select(valor) %>%
-  mutate(total = estab_geral,
-         pct = (valor/total)-1)
+  mutate(total = n_estab,
+         pct = (total_value/total)-1)
+
+# % com acesso à água para o uso produtivo (irrigação)
 
 #### Irrigação ####
 
@@ -220,11 +254,11 @@ t_irr <- "/t/6857"
 tem_irr <- "/V/2372"
 
 
-rec_irr <- import_db(str_c(t_irr, familiar, unidade_nacional, tem_irr))
+rec_irr <- sum_all(str_c(t_irr, familiar, municipio, tem_irr))
 rec_irr %>%
-  select(valor) %>%
-  mutate(total = estab_geral,
-         pct = (valor/total))
+  mutate(total = n_estab,
+         pct = (total_value/total)*100)
+
 
 #### Cisterna ####
 
@@ -233,110 +267,219 @@ t_cis <- "/t/6860"
 tipo <- "/C12482/all"
 agua <- "/V/2324"
 
-cisterna <- import_db(str_c(t_cis, tipo, unidade_nacional, familiar))
-cisterna %>%
-  filter(str_detect(tipo_de_recurso_hidrico, "(poços convencionais|cisternas$)")) %>%
-  summarise(cisterna = sum(valor, na.rm = T),
-         total = estab_geral,
-         pct = (cisterna/total)*100)
-
-agua <- import_db(str_c(t_cis, unidade_nacional, familiar, agua))
-cisterna %>%
-  filter(tipo_de_recurso_hidrico == "Total") %>%
-  summarise(total = estab_geral,
-            pct = (valor/total)*100)
-
-cisterna %>%
-  filter(str_detect(tipo_de_recurso_hidrico, "cisterna")) %>%
-  summarise(cisterna = sum(valor, na.rm = T),
-            total = estab_geral,
-            pct = (cisterna/total)*100)
-
+cisterna <- sum_all(str_c(t_cis, tipo, municipio, familiar))
+total_cisterna <- get_totals(cisterna, tipo_de_recurso_hidrico)
+specifics(cisterna, tipo_de_recurso_hidrico,
+          str_detect(tolower(tipo_de_recurso_hidrico), "(poços convencionais|cisternas$)"), 
+          total_cisterna, "tipo_de_recurso_hidrico") %>%
+  summarise(cisterna = sum(local_value),
+            pct_cisterna = cisterna/n_estab,
+            local_value = total_value,
+            total_value = n_estab,
+            pct = local_value/total_value) %>%
+  unique()
 
 #### Terra e propriedade ####
+
+# área média por estabelecimentos agropecuários
 
 
 table_area <- "/t/6759"
 tamanho <- "/C220/all"
 prop <- "/C218/46503"
 
-area <- import_db(str_c(table_area, cor_2, unidade_nacional, tamanho, familiar))
-
-
-medias <- c(0.05, 0.35, mean(0.5, 1), mean(1, 2), mean(1000, 2500), mean(10,20), mean(10000, 30000), mean(100, 200), mean(2, 3), mean(2500, 10000), mean(20, 50),
-            mean(200, 500), mean(3, 4), mean(4, 5), mean(5, 10), mean(50, 100), mean(500, 1000), mean(0, 0.1), 0, 0)
+area <- sum_all(str_c(table_area, cor_2, municipio, tamanho, familiar))
 joined <- count(area, grupos_de_area_total) %>%
-  cbind(medias)
+  mutate(novos_grupos = str_replace_all(grupos_de_area_total, "\\.", "") %>%
+              str_replace_all(",", ".")) %>%
+  arrange(novos_grupos) %>%
+  mutate(first_num = str_extract(novos_grupos, "[0-9]+[\\.]*[0-9]*"),
+         novos_grupos = str_remove(novos_grupos, "[0-9]+[\\.]*[0-9]*"),
+         second_num = str_extract(novos_grupos, "[0-9]+[\\.]*[0-9]*")) %>%
+  mutate_at(vars(first_num, second_num), as.numeric) %>%
+  mutate(mean_val = (first_num + second_num) / 2,
+         mean_val = if_else(is.na(mean_val), first_num, mean_val)) %>%
+  select(grupos_de_area_total, mean_val)
 
 area <- area %>%
   left_join(joined)
 
-# Indígena
-
 area %>%
-  filter(cor_ou_raca_do_produtor == "Indígena") %>%
-  select(cor_ou_raca_do_produtor, grupos_de_area_total, valor, medias) %>%
-  filter(grupos_de_area_total != "Total") %>%
-  filter(!is.na(valor)) %>%
-  summarise(media = weighted.mean(medias, valor))
+  group_by(cor_ou_raca_do_produtor) %>%
+  filter(!is.na(total_value) & !is.na(mean_val)) %>%
+  summarise(weighted.mean(mean_val, total_value))
 
-# Afro-descendentes
+# % estabelecimentos com área entre 0.5 e 4 hectares
 
-area %>%
-  filter(cor_ou_raca_do_produtor == "Parda" | cor_ou_raca_do_produtor == "Preta") %>%
-  select(cor_ou_raca_do_produtor, grupos_de_area_total, valor, medias) %>%
-  group_by(grupos_de_area_total) %>%
-  summarise(valor = sum(valor)) %>%
-  left_join(joined) %>%
-  filter(grupos_de_area_total != "Total") %>%
-  filter(!is.na(valor)) %>%
-  summarise(media = weighted.mean(medias, valor))
+area %>% View
+  filter(!is.na(total_value))
 
-# total
-area %>%
-  filter(cor_ou_raca_do_produtor == "Total") %>%
-  select(cor_ou_raca_do_produtor, grupos_de_area_total, valor, medias) %>%
-  filter(grupos_de_area_total != "Total") %>%
-  filter(!is.na(valor)) %>%
-  summarise(media = weighted.mean(medias, valor))
+  
+meio_4 <- filter(area, mean_val >= 0.75 & mean_val <= 3.5)
+  
+total_area <- get_totals(area, grupos_de_area_total) %>%
+  select(-mean_val)
+specifics(meio_4, grupos_de_area_total, cor_ou_raca_do_produtor != "Amarela", total_area, "grupos_de_area_total") %>%
+  group_by(cor_ou_raca_do_produtor) %>%
+  summarise(local_value = sum(local_value),
+            total_value = max(total_value)) %>%
+  ungroup() %>%
+  mutate(pct = local_value/total_value)
 
+inco_cinquenta <- filter(area, mean_val >= 7.5 & mean_val <= 35)
 
-# Total estab
-total_est <- area %>%
-  filter(grupos_de_area_total == "Total" & cor_ou_raca_do_produtor == "Total") %>%
-  .$valor
-total_in <-  area %>%
-  filter(grupos_de_area_total == "Total" & cor_ou_raca_do_produtor == "Indígena") %>%
-  .$valor
+specifics(inco_cinquenta, grupos_de_area_total, cor_ou_raca_do_produtor != "Amarela", total_area, "grupos_de_area_total") %>%
+  group_by(cor_ou_raca_do_produtor) %>%
+  summarise(local_value = sum(local_value),
+            total_value = max(total_value)) %>%
+  ungroup() %>%
+  mutate(pct = local_value/total_value)
 
-area %>%
-  select(grupos_de_area_total, valor, cor_ou_raca_do_produtor) %>%
-  .[5:8,] %>%
-  summarise(valor = sum(valor)) %>%
-  mutate(total = total_est,
-         pct = valor/total_est)
+# % dos produtores com título de propriedade
 
-area %>%
-  filter(cor_ou_raca_do_produtor == "Indígena") %>%
-  select(grupos_de_area_total, valor, cor_ou_raca_do_produtor) %>%
-  .[5:8,] %>%
-  summarise(valor = sum(valor)) %>%
-  mutate(total = total_in,
-         pct = valor/total)
-
-
-#### Título de propriedade ####
-
-proprietario <- import_db(str_c(table_area, cor_2, unidade_nacional, familiar, prop))
+proprietario <- sum_all(str_c(table_area, cor_2, municipio, familiar, prop))
 
 
 proprietario %>%
-  mutate(total = total_est,
-         pct = valor/total) %>%
+  mutate(total = n_estab,
+         pct = total_value/total) %>%
   select(cor_ou_raca_do_produtor, pct)
+
+total_prop <- get_totals(proprietario, condicao_do_produtor_em_relacao_as_terras)
+specifics(proprietario, condicao_do_produtor_em_relacao_as_terras, total_value != 0, total_prop, "condicao_do_produtor_em_relacao_as_terras") %>%
+  filter(condicao_do_produtor_em_relacao_as_terras == "Proprietário(a)")
 
 proprietario %>%
   mutate(total = total_in,
          pct = valor/total) %>%
   select(cor_ou_raca_do_produtor, pct)
 
+#### Socio-demográfico 2 ####
+
+# Estabelecimento classificado como AF
+
+t_af <- "/t/6776"
+tipo <- "/C829/all"
+
+af <- sum_all(str_c(t_af, tipo, cor_2, municipio))
+
+af_total <- get_totals(af, tipologia)
+specifics(af, tipologia, tipologia == "Agricultura familiar - sim", af_total, "tipologia")
+specifics(af, tipologia, tipologia == "Agricultura familiar - não", af_total, "tipologia")
+
+
+
+# Cooperativa ou entidade de classe
+
+t_class <- "/t/6773"
+as_classe <- "/C12598/all"
+
+classe <- sum_all(str_c(t_class, as_classe, familiar, municipio)) %>%
+  filter(unidade_de_medida == "Unidades")
+total_classe <- get_totals(classe, associacao_do_produtor_a_cooperativa_e_ou_a_entidade_de_classe)
+specifics(classe, 
+          associacao_do_produtor_a_cooperativa_e_ou_a_entidade_de_classe, 
+          total_value != 0, 
+          total_classe, 
+          "associacao_do_produtor_a_cooperativa_e_ou_a_entidade_de_classe")
+
+# Desocupação
+
+t_desocup <- "/t/6884"
+n_pessoal <- "/V/185"
+sexo <- "/C2/all"
+
+
+desocupacao <- sum_all(str_c(t_desocup, n_pessoal, sexo, familiar, municipio))
+
+total_desocupacao <- get_totals(desocupacao, sexo)
+
+pop_total <- "/v/93"
+populacao <- sum_all(str_c("/t/1378", municipio, sexo, pop_total, rural)) %>%
+  select(sexo, populacao = total_value)
+desocupacao %>%
+  left_join(populacao) %>%
+  mutate(pct = (total_value/populacao)-1)
+
+
+
+# Afazeres domésticos
+
+t_dom <- "/t/7003"
+af_dom <- "/v/10177"
+ano <- "/p/2019"
+pi <- "/n3/22"
+cor <- "/c86/all"
+sexo_2 <- "/C2/all"
+
+
+afazeres <- import_db(str_c("/t/7004", "/v/10178", ano, pi, cor, sexo_2)) %>%
+  select(cor_ou_raca, sexo, valor) %>%
+  mutate(cor_ou_raca = if_else(str_detect(cor_ou_raca, "Preta|Parda"), "Negra", cor_ou_raca)) %>%
+  group_by(cor_ou_raca, sexo) %>%
+  summarise(total_valor = mean(valor))
+
+populacao <- import_db(str_c("/t/6408", pi, sexo_2, "/v/606", cor, ano)) %>%
+  select(cor_ou_raca, sexo, valor) %>%
+  mutate(cor_ou_raca = if_else(str_detect(cor_ou_raca, "Preta|Parda"), "Negra", cor_ou_raca)) %>%
+  group_by(cor_ou_raca, sexo) %>%
+  summarise(total_valor = sum(valor))
+
+afazeres %>%
+  left_join(populacao)
+
+
+# Moradores médios
+
+morador <- sum_all(str_c("/t/156", municipio, "/p/2010", "/v/134,619"))
+moradores <- import_db(str_c("/t/156", municipio, "/p/2010", "/v/134,619"))
+
+pessoa <- moradores %>%
+  filter(str_detect(variavel, "Pessoas")) %>%
+  select(n = valor)
+media <- moradores %>%
+  filter(str_detect(variavel, "Média")) %>%
+  select(media = valor)
+pessoa %>%
+  cbind(media) %>%
+  mutate(total= n*media) %>%
+  summarise(pct_total = sum(total)/sum(n))
+
+
+# Esgoto
+sanitario <- "/c458/all"
+esgoto <- "/C11558/all"
+rural <- "/c1/2"
+
+
+esgotamento <- sum_all(str_c("/t/1394", municipio, esgoto))
+total_esgoto <-   get_totals(esgotamento, tipo_de_esgotamento_sanitario)
+specifics(esgotamento, tipo_de_esgotamento_sanitario,
+          total_value != 0, total_esgoto, "tipo_de_esgotamento_sanitario")
+
+
+esgotamento <- sum_all(str_c("/t/1394", municipio, esgoto, rural))
+total_esgoto <-   get_totals(esgotamento, tipo_de_esgotamento_sanitario)
+specifics(esgotamento, tipo_de_esgotamento_sanitario,
+          total_value != 0, total_esgoto, "tipo_de_esgotamento_sanitario")
+
+
+abastecimento <- "/c61/all"
+
+agua <- sum_all(str_c("/t/3217", municipio, abastecimento, rural))
+total_agua <- get_totals(agua, forma_de_abastecimento_de_agua)
+
+specifics(agua, forma_de_abastecimento_de_agua,
+          str_detect(variavel, "Domicílios"), total_agua, "forma_de_abastecimento_de_agua")
+
+
+
+
+# Produção e venda
+
+venda <- "/v/10097"
+
+vendas <- sum_all(str_c("/t/6960", municipio, familiar, venda))
+vendas %>%
+  mutate(estabs = n_estab,
+         valor_med = total_value*1000/12)
