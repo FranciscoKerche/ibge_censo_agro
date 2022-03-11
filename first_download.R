@@ -7,8 +7,9 @@ region <- import("banco_com_codigos.xlsx", setclass = "tibble") %>%
   clean_names()
 municipio <- str_c("/N6/", paste0(region$codigo, collapse = ","))
 cor_2 <- "/c830/all"
-sexo <- "/C12564/all"
+sexo_1 <- "/C12564/all"
 familiar <- "/C829/46304"
+rural <- "/c1/2"
 
 
 import_db <- function(base){
@@ -16,7 +17,6 @@ import_db <- function(base){
     tibble() %>%
     janitor::clean_names()
 }
-teste <- import_db(str_c(table, cor_2, municipio))
 
 sum_all <- function(structure){
   base <- import_db(structure)
@@ -90,7 +90,8 @@ escola <- "/C800/all"
 
 # Analfabetos
 
-alfabeto <- sum_all(str_c(t_alfa, cor_2, municipio, sexo, escola, familiar))
+
+alfabeto <- sum_all(str_c(t_alfa, cor_2, municipio, sexo_1, escola, familiar))
 totals_alfa <- alfabeto %>%
   get_totals(escolaridade_do_produtor, T, sexo_do_produtor)
 
@@ -133,7 +134,7 @@ t_direcao <- "/t/6776"
 dirigido <- "/V/9998"
 
 
-estabelecimento <- sum_all(str_c(t_direcao, cor_2, sexo, municipio, dirigido, familiar))
+estabelecimento <- sum_all(str_c(t_direcao, cor_2, sexo_1, municipio, dirigido, familiar))
 
 total_estab <- estabelecimento %>%
   get_totals(sexo_do_produtor)
@@ -143,7 +144,7 @@ specifics(estabelecimento, sexo_do_produtor, cor_ou_raca_do_produtor != "Amarela
           "sexo_do_produtor")
 
 
-#### Receitas ####
+#### Número de estabeleicmentos que obtiveram receitas ####
 
 t_receita <- "/t/6901"
 obtencao <- "/V/10006"
@@ -152,6 +153,9 @@ n_estab <- estabelecimento %>%
   filter(cor_ou_raca_do_produtor == "Total" &
            sexo_do_produtor == "Total") %>%
   .$total_value
+
+import_db(str_c(t_receita, obtencao, municipio, familiar)) %>%
+  View
 
 receita <- sum_all(str_c(t_receita, obtencao, municipio, familiar)) %>%
   mutate(estabs = n_estab,
@@ -192,7 +196,7 @@ total_prod <- prod %>%
 specifics(prod, grupos_de_atividade_economica, total_value != 0, 
           total_prod,
           "grupos_de_atividade_economica") %>%
-  mutate(pct = pct*100) %>%
+  mutate(pct = pct) %>%
   View
 
 
@@ -202,6 +206,7 @@ fin_tab <- "/t/6895"
 fin_prog <- "/C12544/all"
 financiamento_pct <- "/V/1001990"
 financiamento_un <- "/V/1990"
+
 
 fin_simp <- sum_all(str_c(fin_tab, familiar, municipio, financiamento_un))
 
@@ -267,10 +272,13 @@ t_cis <- "/t/6860"
 tipo <- "/C12482/all"
 agua <- "/V/2324"
 
+cisterna %>%
+  filter(tolower(tipo_de_recurso_hidrico), "(poços convencionais|cisternas$)")
+
 cisterna <- sum_all(str_c(t_cis, tipo, municipio, familiar))
 total_cisterna <- get_totals(cisterna, tipo_de_recurso_hidrico)
 specifics(cisterna, tipo_de_recurso_hidrico,
-          str_detect(tolower(tipo_de_recurso_hidrico), "(poços convencionais|cisternas$)"), 
+          str_detect(tolower(tipo_de_recurso_hidrico), "cisternas$"), 
           total_cisterna, "tipo_de_recurso_hidrico") %>%
   summarise(cisterna = sum(local_value),
             pct_cisterna = cisterna/n_estab,
@@ -278,6 +286,8 @@ specifics(cisterna, tipo_de_recurso_hidrico,
             total_value = n_estab,
             pct = local_value/total_value) %>%
   unique()
+
+
 
 #### Terra e propriedade ####
 
@@ -311,9 +321,6 @@ area %>%
 
 # % estabelecimentos com área entre 0.5 e 4 hectares
 
-area %>% View
-  filter(!is.na(total_value))
-
   
 meio_4 <- filter(area, mean_val >= 0.75 & mean_val <= 3.5)
   
@@ -345,14 +352,13 @@ proprietario %>%
          pct = total_value/total) %>%
   select(cor_ou_raca_do_produtor, pct)
 
-total_prop <- get_totals(proprietario, condicao_do_produtor_em_relacao_as_terras)
-specifics(proprietario, condicao_do_produtor_em_relacao_as_terras, total_value != 0, total_prop, "condicao_do_produtor_em_relacao_as_terras") %>%
-  filter(condicao_do_produtor_em_relacao_as_terras == "Proprietário(a)")
+prop_all <- "/C218/all"
+proprietario_geral <- sum_all(str_c(table_area, prop_all, cor_2, municipio, familiar))
 
-proprietario %>%
-  mutate(total = total_in,
-         pct = valor/total) %>%
-  select(cor_ou_raca_do_produtor, pct)
+
+total_prop <- get_totals(proprietario_geral, condicao_do_produtor_em_relacao_as_terras)
+specifics(proprietario_geral, condicao_do_produtor_em_relacao_as_terras, total_value != 0, total_prop, "condicao_do_produtor_em_relacao_as_terras") %>%
+  filter(condicao_do_produtor_em_relacao_as_terras == "Proprietário(a)")
 
 #### Socio-demográfico 2 ####
 
@@ -408,7 +414,7 @@ desocupacao %>%
 t_dom <- "/t/7003"
 af_dom <- "/v/10177"
 ano <- "/p/2019"
-pi <- "/n3/22"
+piaui <- "/n3/22"
 cor <- "/c86/all"
 sexo_2 <- "/C2/all"
 
@@ -432,7 +438,7 @@ afazeres %>%
 # Moradores médios
 
 morador <- sum_all(str_c("/t/156", municipio, "/p/2010", "/v/134,619"))
-moradores <- import_db(str_c("/t/156", municipio, "/p/2010", "/v/134,619"))
+moradores <- import_db(str_c("/t/156", piaui, "/p/2010", "/v/134,619"))
 
 pessoa <- moradores %>%
   filter(str_detect(variavel, "Pessoas")) %>%
@@ -474,12 +480,22 @@ specifics(agua, forma_de_abastecimento_de_agua,
 
 
 
-
 # Produção e venda
 
 venda <- "/v/10097"
+finalidade <- "/C834/all"
 
-vendas <- sum_all(str_c("/t/6960", municipio, familiar, venda))
+vendas <- sum_all(str_c("/t/6961", municipio, familiar, venda))
 vendas %>%
   mutate(estabs = n_estab,
-         valor_med = total_value*1000/12)
+         valor_med = (total_value*1000/estabs)/12)
+
+consumo <- sum_all(str_c("/t/6762", municipio, finalidade, familiar))
+
+n_comercio <- consumo %>%
+  filter(str_detect(finalidade_principal_da_producao_agropecuaria_do_estabelecimento, "Comercia")) %>%
+  .$total_value
+
+vendas %>%
+  mutate(comercio = n_comercio,
+         valor_med = (total_value*1000/comercio)/12)
